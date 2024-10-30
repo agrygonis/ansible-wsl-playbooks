@@ -1,0 +1,64 @@
+- hosts: localhost
+  become: yes
+  tasks:
+    - name: Atualizar repositórios apt
+      apt:
+        update_cache: yes
+
+    - name: Instalar pacotes necessários
+      apt:
+        name:
+          - conntrack
+          - socat
+          - ebtables
+          - iptables
+        state: present
+
+    - name: Obter a versão estável mais recente do kubectl
+      shell: curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt
+      register: kubectl_version
+
+    - name: Baixar e instalar kubectl
+      get_url:
+        url: "https://storage.googleapis.com/kubernetes-release/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Verificar instalação do kubectl
+      command: kubectl version --client
+      register: kubectl_check
+      ignore_errors: yes
+
+    - name: Exibir a versão do kubectl instalada
+      debug:
+        msg: "{{ kubectl_check.stdout }}"
+
+    - name: Baixar Minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+
+    - name: Verificar se há perfis existentes do Minikube
+      command: minikube profile list --output json
+      register: profile_list
+      failed_when: false
+
+    - name: Verificar se o perfil 'minikube' existe
+      set_fact:
+        minikube_profile_exists: "{{ 'minikube' in profile_list.stdout }}"
+
+    - name: Iniciar Minikube se o perfil não existir
+      become: no
+      shell: minikube start --driver=docker
+      when: not minikube_profile_exists
+
+    - name: Verificar status do Minikube
+      command: minikube status
+      register: minikube_status
+      failed_when: false
+
+    - name: Exibir o status do Minikube
+      debug:
+        msg: "{{ minikube_status.stdout }}"
+
