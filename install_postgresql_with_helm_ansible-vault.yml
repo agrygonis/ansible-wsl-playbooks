@@ -1,0 +1,99 @@
+- hosts: localhost
+  environment:
+    KUBECONFIG: "{{ lookup('env', 'HOME') }}/.kube/config"
+  vars_files:
+    - secrets.yml  # Contém o password protegido pelo ansible-vault
+  tasks:
+    - name: Verificar se o perfil minikube está ativo como usuário padrão
+      shell: |
+        sudo -u $USER minikube profile list | grep -q '^| minikube |.* Running' || sudo -u $USER minikube start -p minikube
+      register: minikube_check
+      changed_when: false
+
+    - name: Criar o namespace 'database' para PostgreSQL
+      shell: kubectl create namespace database
+      ignore_errors: yes
+
+    - name: Criar Secret para credenciais do PostgreSQL (somente password)
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: postgres-secret
+          namespace: database
+        type: Opaque
+        data:
+          POSTGRESQL_PASSWORD: "{{ postgresql_password }}"
+        EOF
+
+    - name: Criar ConfigMap para o PostgreSQL (contém o username e o database)
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: postgres-config
+          namespace: database
+        data:
+          POSTGRESQL_USERNAME: "postgresql"
+          POSTGRESQL_DATABASE: "kollabio"
+        EOF
+
+    - name: Adicionar repositório Helm Bitnami (caso não exista)
+      become: yes
+      shell: helm repo add bitnami https://charts.bitnami.com/bitnami
+      args:
+        creates: "{{ ansible_env.HOME }}/.cache/helm/repository/bitnami-index.yaml"
+
+    - name: Atualizar repositórios Helm
+      become: yes
+      shell: helm repo update
+      changed_when: false  # Considera como sem alteração para idempotência
+
+    - name: Instalar/atualizar PostgreSQL com Helm usando NodePort
+      become: yes
+      shell: |
+        helm upgrade --install postgresql bitnami/postgresql \
+          --namespace database \
+          --set global.storageClass=standard \
+          --set service.type=NodePort \
+          --set service.nodePort=30007 \
+          --set persistence.enabled=true \
+          --set persistence.size=2Gi \
+          --set existingSecret=postgres-secret \
+          --set auth.username=postgresql \
+          --set postgresqlPasswordKey=POSTGRESQL_PASSWORD \
+          --set postgresqlDatabase=kollabio \
+          --set extraEnv[0].name=POSTGRESQL_USERNAME \
+          --set extraEnv[0].valueFrom.configMapKeyRef.name=postgres-config \
+          --set extraEnv[0].valueFrom.configMapKeyRef.key=POSTGRESQL_USERNAME \
+          --set extraEnv[1].name=POSTGRESQL_PASSWORD \
+          --set extraEnv[1].valueFrom.secretKeyRef.name=postgres-secret \
+          --set extraEnv[1].valueFrom.secretKeyRef.key=POSTGRESQL_PASSWORD \
+          --set extraEnv[2].name=POSTGRESQL_DATABASE \
+          --set extraEnv[2].valueFrom.configMapKeyRef.name=postgres-config \
+          --set extraEnv[2].valueFrom.configMapKeyRef.key=POSTGRESQL_DATABASE
+      register: helm_result
+      changed_when: "'release' in helm_result.stdout"
+
+    - name: Aplicar patch no serviço PostgreSQL para usar NodePort 30007
+      shell: |
+        kubectl patch svc postgresql -n database -p '{"spec": {"type": "NodePort", "ports": [{"port": 5432, "targetPort": 5432, "nodePort": 30007}]}}'
+      ignore_errors: yes
+
+    - name: Verificar status dos pods PostgreSQL
+      shell: sudo -u $USER kubectl get pods -n database
+      register: pod_status
+
+    - name: Exibir o status dos pods PostgreSQL
+      debug:
+        msg: "{{ pod_status.stdout }}"
+
+    - name: Obter o IP do Minikube como usuário padrão
+      shell: sudo -u $USER minikube -p minikube ip
+      register: minikube_ip
+
+    - name: Exibir URL para acessar o PostgreSQL
+      debug:
+        msg: "URL para acessar o PostgreSQL: http://{{ minikube_ip.stdout }}:30007"

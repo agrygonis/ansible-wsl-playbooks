@@ -1,0 +1,53 @@
+- name: Configuração do ambiente WSL
+  hosts: localhost
+  connection: local
+  become: true
+  tasks:
+    - name: Atualizar repositórios do sistema
+      apt:
+        update_cache: yes
+
+    - name: Instalar dependências para Docker e Kubernetes
+      apt:
+        name: ['curl', 'apt-transport-https', 'ca-certificates', 'software-properties-common']
+        state: present
+
+    - name: Adicionar chave e repositório do Docker
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+        add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Instalar Docker
+      apt:
+        name: docker-ce
+        state: present
+
+    - name: Adicionar usuário ao grupo Docker
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Instalar Minikube e Kubectl
+      shell: |
+        curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        sudo install minikube-linux-amd64 /usr/local/bin/minikube
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        sudo install kubectl /usr/local/bin/kubectl
+      args:
+        creates: /usr/local/bin/minikube
+
+    - name: Iniciar Minikube
+      shell: minikube start --driver=docker
+
+    - name: Verificar se Docker e Minikube estão rodando
+      shell: |
+        docker --version
+        minikube status
+      register: result
+      ignore_errors: true
+
+    - debug:
+        msg: "{{ result.stdout_lines }}"

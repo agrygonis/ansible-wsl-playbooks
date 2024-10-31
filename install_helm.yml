@@ -1,0 +1,22 @@
+- hosts: localhost
+  become: yes
+  tasks:
+    - name: Atualizar repositórios apt
+      apt:
+        update_cache: yes
+
+    - name: Instalar pacotes necessários para o Helm
+      apt:
+        name: curl
+        state: present
+
+    - name: Instalar o Helm
+      shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    - name: Verificar instalação do Helm
+      command: helm version
+      register: helm_version_output
+
+    - name: Exibir a versão do Helm instalada
+      debug:
+        msg: "{{ helm_version_output.stdout }}"

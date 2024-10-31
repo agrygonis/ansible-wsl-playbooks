@@ -1,0 +1,52 @@
+- hosts: localhost
+  become: yes
+  tasks:
+    - name: Atualizar repositórios apt
+      apt:
+        update_cache: yes
+
+    - name: Instalar pacotes necessários
+      apt:
+        name:
+          - wget
+          - unzip
+        state: present
+
+    - name: Obter a última versão estável do Terraform
+      shell: |
+        curl -s https://releases.hashicorp.com/terraform/ \
+        | grep -Eo '/terraform/[0-9]+\.[0-9]+\.[0-9]+/' \
+        | grep -vE 'alpha|beta|rc' \
+        | sed 's|/terraform/||; s|/||' \
+        | sort -V | tail -n 1
+      register: terraform_version
+
+    - name: Exibir a versão mais recente do Terraform
+      debug:
+        msg: "Última versão estável do Terraform: {{ terraform_version.stdout }}"
+
+    - name: Verificar se a versão foi encontrada corretamente
+      fail:
+        msg: "Erro: Não foi possível obter uma versão válida do Terraform."
+      when: terraform_version.stdout == ""
+
+    - name: Baixar o Terraform
+      get_url:
+        url: "https://releases.hashicorp.com/terraform/{{ terraform_version.stdout }}/terraform_{{ terraform_version.stdout }}_linux_amd64.zip"
+        dest: /tmp/terraform.zip
+
+    - name: Descompactar Terraform no diretório /usr/local/bin
+      command: unzip /tmp/terraform.zip -d /usr/local/bin/
+
+    - name: Definir permissões para o binário Terraform
+      file:
+        path: /usr/local/bin/terraform
+        mode: '0755'
+
+    - name: Verificar instalação do Terraform
+      command: terraform version
+      register: terraform_version_output
+
+    - name: Exibir a versão do Terraform instalada
+      debug:
+        msg: "{{ terraform_version_output.stdout }}"

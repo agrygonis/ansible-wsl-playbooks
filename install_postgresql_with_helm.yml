@@ -1,0 +1,61 @@
+- hosts: localhost
+  environment:
+    KUBECONFIG: "{{ lookup('env', 'HOME') }}/.kube/config"
+  tasks:
+    - name: Verificar se o perfil minikube está ativo como usuário padrão
+      shell: |
+        sudo -u $USER minikube profile list | grep -q '^| minikube |.* Running' || sudo -u $USER minikube start -p minikube
+      register: minikube_check
+      changed_when: false
+
+    - name: Criar o namespace 'database' para PostgreSQL
+      shell: kubectl create namespace database
+      ignore_errors: yes
+
+    - name: Adicionar repositório Helm Bitnami (caso não exista)
+      become: yes
+      shell: helm repo add bitnami https://charts.bitnami.com/bitnami
+      args:
+        creates: "{{ ansible_env.HOME }}/.cache/helm/repository/bitnami-index.yaml"
+
+    - name: Atualizar repositórios Helm
+      become: yes
+      shell: helm repo update
+      changed_when: false  # Considera como sem alteração para idempotência
+
+    - name: Instalar/atualizar PostgreSQL com Helm usando NodePort e credenciais embutidas
+      become: yes
+      shell: |
+        helm upgrade --install postgresql bitnami/postgresql \
+          --namespace database \
+          --set global.storageClass=standard \
+          --set service.type=NodePort \
+          --set service.nodePort=30007 \
+          --set persistence.enabled=true \
+          --set persistence.size=2Gi \
+          --set auth.username=postgresql \
+          --set auth.password=postgresql \
+          --set auth.database=kollabio
+      register: helm_result
+      changed_when: "'release' in helm_result.stdout"
+
+    - name: Aplicar patch no serviço PostgreSQL para usar NodePort 30007
+      shell: |
+        kubectl patch svc postgresql -n database -p '{"spec": {"type": "NodePort", "ports": [{"port": 5432, "targetPort": 5432, "nodePort": 30007}]}}'
+      ignore_errors: yes
+
+    - name: Verificar status dos pods PostgreSQL
+      shell: sudo -u $USER kubectl get pods -n database
+      register: pod_status
+
+    - name: Exibir o status dos pods PostgreSQL
+      debug:
+        msg: "{{ pod_status.stdout }}"
+
+    - name: Obter o IP do Minikube como usuário padrão
+      shell: sudo -u $USER minikube -p minikube ip
+      register: minikube_ip
+
+    - name: Exibir URL para acessar o PostgreSQL
+      debug:
+        msg: "URL para acessar o PostgreSQL: http://{{ minikube_ip.stdout }}:30007"

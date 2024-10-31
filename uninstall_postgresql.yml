@@ -1,0 +1,31 @@
+- hosts: localhost
+  environment:
+    KUBECONFIG: "{{ lookup('env', 'HOME') }}/.kube/config"
+  tasks:
+    - name: Verificar se o perfil minikube está ativo como usuário padrão
+      shell: |
+        sudo -u $USER minikube profile list | grep -q '^| minikube |.* Running' || sudo -u $USER minikube start -p minikube
+      register: minikube_check
+      changed_when: false
+
+    - name: Desinstalar o PostgreSQL com Helm
+      become: yes
+      shell: helm uninstall postgresql -n database
+      ignore_errors: yes
+
+    - name: Remover Secret de credenciais do PostgreSQL
+      shell: kubectl delete secret postgres-secret -n database
+      ignore_errors: yes
+
+    - name: Remover ConfigMap de configuração do PostgreSQL
+      shell: kubectl delete configmap postgres-config -n database
+      ignore_errors: yes
+
+    - name: Remover o namespace 'database' (se não necessário para outros recursos)
+      shell: kubectl delete namespace database
+      ignore_errors: yes
+
+    - name: Remover o repositório Helm Bitnami (opcional)
+      become: yes
+      shell: helm repo remove bitnami
+      ignore_errors: yes
